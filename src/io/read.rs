@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, ErrorKind};
 use std::net::{TcpStream};
 
 use crate::errors::Errors;
@@ -13,7 +13,7 @@ pub fn read_stream(client: &mut TcpStream, byte_amount: usize, chunk: usize) -> 
       Ok(l) => l,
       Err(e) => {
         println!("{}", e);
-        return Err(Errors::ReadError);
+        return Err(Errors::ReadError("Failed to read bytes".to_string()));
       }
     };
     read_bytes += length;
@@ -31,14 +31,16 @@ pub fn read_stream(client: &mut TcpStream, byte_amount: usize, chunk: usize) -> 
 }
 
 /// Reads no more, but potentially less data than the byte_amount from the stream.
-pub fn pluck_stream(client: &mut TcpStream, byte_amount: usize) -> Result<Vec<u8>, Errors> {
-  let mut data = Vec::with_capacity(byte_amount);
+pub fn pluck_stream(client: &mut TcpStream, byte_amount: &u32) -> Result<Vec<u8>, Errors> {
+  let mut data = Vec::with_capacity(*byte_amount as usize);
 
   match client.read(&mut data) {
     Ok(l) => l,
     Err(e) => {
-      println!("{}", e);
-      return Err(Errors::ReadError);
+      return match e.kind() {
+        ErrorKind::Interrupted => Err(Errors::ReadRetryError),
+        _ => Err(Errors::ReadError("Failed to pluck bytes".to_string()))
+      };
     }
   };
 

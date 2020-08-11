@@ -1,61 +1,68 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::net::TcpStream;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use crossbeam_utils::thread as cross_thread;
 use crossbeam_channel::{unbounded, Sender, Receiver};
 
 pub mod headers;
 pub mod io;
 pub mod errors;
-pub mod pipe;
+pub mod process;
+pub mod server;
+pub mod assembler;
 
+use crate::process::Lease;
+use crate::headers::{Headers, HeaderType};
+
+#[derive(Debug)]
 pub struct Request {
-    headers: headers::Headers
+    client: TcpStream,
+    lease: Option<Lease>,
+    headers: Option<Headers>,
+    chunk: Option<Vec<u8>>
 }
 
-pub struct Cache {
-    leases: Mutex<HashMap<String, pipe::Lease>>
-}
-
-pub struct AssemblerChannels {
-    sender: Sender<Request>,
-    receiver: Receiver<Request>
-}
-
-pub struct PipeChannels {
-    sender: Sender<TcpStream>,
-    receiver: Receiver<TcpStream>
-}
-
-pub struct Server {
-    pipe_channels: PipeChannels,
-    assembler_channels: AssemblerChannels,
-    cache: Arc<Cache>
-}
-
-impl Server {
-    pub fn new() -> Self {
-        let (pipe_s, pipe_r) = unbounded();
-        let (assembler_s, assembler_r) = unbounded();
-
-        return Server {
-            pipe_channels: PipeChannels {
-                sender: pipe_s,
-                receiver: pipe_r
-            },
-            assembler_channels: AssemblerChannels {
-                sender: assembler_s,
-                receiver: assembler_r
-            },
-            cache: Arc::new(Cache {
-                leases: Mutex::new(HashMap::new()),
-            })
+impl Request {
+    pub fn set_header_type(&mut self, header_type: HeaderType) {
+        if let Some(headers) = self.headers.as_mut() {
+            headers.set_header_type(header_type);
         }
     }
 
-
+    pub fn set_last_chunk_time(&mut self) {
+        if let Some(lease) = self.lease.as_mut() {
+            lease.ns_last_sent = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards. lol")
+                .as_nanos();
+        }
+    }
 }
 
+pub struct Cache {
+    leases: Mutex<HashMap<String, Lease>>
+}
+
+pub fn start_server(url: String) {
+    let (process_s, process_r): (Sender<Request>, Receiver<Request>) = unbounded();
+    let (assembler_s, assembler_r): (Sender<Request>, Receiver<Request>) = unbounded();
+    let cache = Arc::new(Cache {
+        leases: Mutex::new(HashMap::new()),
+    });
+
+    cross_thread::scope(|scope| {
+        let s_cache = cache.clone();
+        scope.spawn(move |_| server::start(url, s_cache, process_s));
+
+        let p_cache = cache.clone();
+        scope.spawn(move |_| process::start(p_cache, process_r, assembler_s));
+
+        let a_cache = cache.clone();
+        scope.spawn(move |_| assembler::start(a_cache, assembler_r));
+    }).expect("Failed to create scope");
+}
 
 #[cfg(test)]
 mod tests {

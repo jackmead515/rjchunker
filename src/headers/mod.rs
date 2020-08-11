@@ -1,17 +1,26 @@
 pub mod read;
 
-use crate::pipe::Lease;
+pub const MIN_CHUNK_BYTES: u32 = 1000; // 1 KB
+pub const MAX_CHUNK_BYTES: u32 = 1000000; // 1 MB
 
+#[derive(Debug)]
 pub struct Headers {
-  header_type: HeaderType,
-  lease_id: Option<String>, 
-  file_name: Option<String>,
-  chunk_num: Option<u32>,
-  chunk_length: Option<u32>,
-  chunk_amount: Option<u32>,
-  cancel: Option<bool>
+  pub header_type: HeaderType,
+  pub lease_id: Option<String>,
+  pub checksum: Option<String>,
+  pub file_name: Option<String>,
+  pub file_length: Option<u32>,
+  pub chunk_length: Option<u32>,
+  pub cancel: Option<bool>
 }
 
+impl Headers {
+  pub fn set_header_type(&mut self, header_type: HeaderType) {
+    self.header_type = header_type;
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum HeaderType {
   LEASE,
   CHUNK,
@@ -20,62 +29,42 @@ pub enum HeaderType {
   ERROR,
 }
 
-pub fn get_header_type(headers: &Headers, lease: &Lease) -> HeaderType {
-  if is_lease_type(headers) {
-    return HeaderType::LEASE;
+impl Headers {
+  /// true if file_length, chunk_length, file_name, and checksum is specified
+  pub fn is_lease_type(&self) -> bool {
+    return self.file_length.is_some()
+      && self.chunk_length.is_some()
+      && self.file_name.is_some()
+      && self.checksum.is_some()
+      && self.cancel.is_none()
+      && self.lease_id.is_none();
   }
 
-  if is_chunk_type(headers) {
-    return HeaderType::CHUNK;
+  /// true if lease_id and chunk_length are specified
+  pub fn is_chunk_type(&self) -> bool {
+    return self.lease_id.is_some()
+      && self.chunk_length.is_some()
+      && self.file_name.is_none()
+      && self.cancel.is_none()
+      && self.file_length.is_none()
   }
 
-  if is_final_type(headers, lease) {
-    return HeaderType::FINAL;
+  /// true if the chunk_length equals the amount of bytes
+  /// left in the lease
+  pub fn is_final_type(&self, bytes_left: &u32) -> bool {
+    if let Some(chunk_length) = self.chunk_length {
+      return bytes_left == &chunk_length;
+    };
+
+    return false;
   }
 
-  if is_cancel_type(headers) {
-    return HeaderType::CANCEL;
+  /// true if cancel is specified
+  pub fn is_cancel_type(&self) -> bool {
+    return self.cancel.is_some()
+      && self.lease_id.is_some()
   }
-
-  return HeaderType::ERROR;
 }
-
-pub fn is_lease_type(headers: &Headers) -> bool {
-  return headers.chunk_amount.is_some()
-    && headers.chunk_length.is_some()
-    && headers.chunk_num.is_some()
-    && headers.file_name.is_some()
-    && headers.cancel.is_none()
-    && headers.lease_id.is_none();
-}
-
-pub fn is_chunk_type(headers: &Headers) -> bool {
-  return headers.lease_id.is_some()
-    && headers.chunk_num.is_some()
-    && headers.file_name.is_none()
-    && headers.cancel.is_none()
-    && headers.chunk_amount.is_none()
-    && headers.chunk_length.is_none()
-}
-
-pub fn is_final_type(headers: &Headers, lease: &Lease) -> bool {
-  let last_chunk = match headers.chunk_num {
-    Some(number) => lease.chunk_amount == number,
-    None => false
-  };
-
-  return headers.lease_id.is_some()
-    && last_chunk
-    && headers.file_name.is_none()
-    && headers.cancel.is_none()
-    && headers.chunk_amount.is_none()
-    && headers.chunk_length.is_none()
-}
-
-pub fn is_cancel_type(headers: &Headers) -> bool {
-  return headers.cancel.is_some();
-}
-
 
 
 

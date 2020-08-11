@@ -1,6 +1,11 @@
+#[derive(Debug)]
 pub enum Errors {
-  ReadError,
-  ParseError,
-  InvalidRequest,
-  FileIOError
+  ReadError(String),
+  ReadLengthError(String),
+  ReadRetryError,
+  WriteError(String),
+  ParseError(String),
+  InvalidRequest(String),
+  FileIOError(String),
+  UnexpectedError(String),
 }
