@@ -19,7 +19,10 @@ pub const FILE_LENGTH_POS: u8 = 3;
 pub const CHUNK_LENGTH_BYTES: u32 = 4;
 pub const CHUNK_LENGTH_POS: u8 = 4;
 
-pub const CANCEL_POS: u8 = 5;
+pub const CHUNK_NUM_BYTES: u32 = 4;
+pub const CHUNK_NUM_POS: u8 = 5;
+
+pub const CANCEL_POS: u8 = 6;
 
 pub fn read_headers(client: &mut TcpStream) -> Result<Headers, Errors> {
   let params = read::pluck_stream(client, &1)?[0];
@@ -31,6 +34,7 @@ pub fn read_headers(client: &mut TcpStream) -> Result<Headers, Errors> {
     file_name: None,
     file_length: None,
     chunk_length: None,
+    chunk_num: None,
     cancel: None
   };
 
@@ -63,7 +67,7 @@ pub fn read_headers(client: &mut TcpStream) -> Result<Headers, Errors> {
     if data.len() != FILE_LENGTH_BYTES as usize {
       return Err(Errors::ReadError("invalid file_length length from headers".to_string()));
     }
-    headers.file_length = Some(util::read_u32(data)?);
+    headers.file_length = Some(util::read_u32(&data)?);
   }
 
   if util::bit_at(params, CHUNK_LENGTH_POS) {
@@ -71,7 +75,7 @@ pub fn read_headers(client: &mut TcpStream) -> Result<Headers, Errors> {
     if data.len() != CHUNK_LENGTH_BYTES as usize {
       return Err(Errors::ReadError("invalid chunk_length length from headers".to_string()));
     }
-    let chunk_length = util::read_u32(data)?;
+    let chunk_length = util::read_u32(&data)?;
 
     if chunk_length > MAX_CHUNK_BYTES {
       return Err(Errors::InvalidRequest("requests chunk length to large".to_string()));
@@ -82,6 +86,14 @@ pub fn read_headers(client: &mut TcpStream) -> Result<Headers, Errors> {
     }
 
     headers.chunk_length = Some(chunk_length);
+  }
+
+  if util::bit_at(params, CHUNK_NUM_POS) {
+    let data = read::pluck_stream(client, &CHUNK_NUM_BYTES)?;
+    if data.len() != CHUNK_NUM_BYTES as usize {
+      return Err(Errors::ReadError("invalid chunk_num length from headers".to_string()));
+    }
+    headers.chunk_num = Some(util::read_u32(&data)?);
   }
 
   if util::bit_at(params, CANCEL_POS) {

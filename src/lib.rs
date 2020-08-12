@@ -30,15 +30,6 @@ impl Request {
             headers.set_header_type(header_type);
         }
     }
-
-    pub fn set_last_chunk_time(&mut self) {
-        if let Some(lease) = self.lease.as_mut() {
-            lease.ns_last_sent = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards. lol")
-                .as_nanos();
-        }
-    }
 }
 
 pub struct Cache {

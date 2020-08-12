@@ -1,5 +1,7 @@
 use std::sync::Arc;
+use std::collections::HashSet;
 use std::net::{TcpStream, Shutdown};
+use std::time::{SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{Sender, Receiver};
 use uuid::Uuid;
 
@@ -17,6 +19,7 @@ pub struct Lease {
   pub file_length: u32,
   pub bytes_left: u32,
   pub chunks_sent: u32,
+  pub chunk_nums: HashSet<u32>,
   pub ns_last_sent: u128,
   pub in_use: bool
 }
@@ -89,27 +92,36 @@ fn handle_lease_request(request: &mut Request, cache: &Arc<Cache>) -> Result<boo
   let file_name = headers.file_name.as_ref().unwrap();
   let file_length = headers.file_length.as_ref().unwrap();
   let chunk_length = headers.chunk_length.as_ref().unwrap();
+  let chunk_num = headers.chunk_num.as_ref().unwrap();
 
   let lease = Lease {
     id: lease_id.to_string(),
     hash: checksum.to_string(),
     file_name: file_name.to_string(),
     file_length: *file_length,
+    chunk_nums: HashSet::new(),
     bytes_left: 0,
     chunks_sent: 0,
     ns_last_sent: 0,
     in_use: true
   };
 
+  request.lease = Some(lease);
+  request.chunk = Some(read_retry_chunk(&mut request.client, chunk_length)?);
+  if let Some(lease) = request.lease.as_mut() {
+    lease.ns_last_sent = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards. lol")
+        .as_nanos();
+
+    lease.chunk_nums.insert(*chunk_num);
+  }
+
   if let Ok(mut leases) = cache.leases.lock() {
-    leases.insert(lease_id, lease.clone());
+    leases.insert(lease_id, request.lease.as_ref().unwrap().clone());
   } else {
     return Err(Errors::UnexpectedError("Failed to get lock on cached leases".to_string()));
   }
-
-  request.lease = Some(lease);
-  request.chunk = Some(read_retry_chunk(&mut request.client, chunk_length)?);
-  request.set_last_chunk_time();
 
   return Ok(true);
 }
@@ -118,8 +130,9 @@ fn handle_chunk_request(request: &mut Request, cache: &Arc<Cache>) -> Result<boo
   let headers = request.headers.as_ref().unwrap();
   let lease_id = headers.lease_id.as_ref().unwrap();
   let chunk_length = headers.chunk_length.as_ref().unwrap();
+  let chunk_num = headers.chunk_num.as_ref().unwrap();
 
-  if let Ok(leases) = cache.leases.lock() {
+  if let Ok(mut leases) = cache.leases.lock() {
     request.lease = match leases.get(lease_id) {
       Some(l) => {
         if l.in_use {
@@ -127,10 +140,16 @@ fn handle_chunk_request(request: &mut Request, cache: &Arc<Cache>) -> Result<boo
           request.client.shutdown(Shutdown::Both).ok();
           return Ok(false);
         }
-
-        Some(l.clone())
+        let mut lc = l.clone();
+        lc.in_use = true;
+        Some(lc)
       },
       None => None
+    };
+
+    if let Some(lease) = &request.lease {
+      let lc = lease.clone();
+      leases.insert(lease_id.to_string(), lc);
     }
   }
 
@@ -143,10 +162,17 @@ fn handle_chunk_request(request: &mut Request, cache: &Arc<Cache>) -> Result<boo
   }
 
   request.chunk = Some(read_retry_chunk(&mut request.client, chunk_length)?);
+  if let Some(lease) = request.lease.as_mut() {
+    lease.ns_last_sent = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards. lol")
+        .as_nanos();
+
+    lease.chunk_nums.insert(*chunk_num);
+  }
   if headers.is_final_type(&request.lease.as_ref().unwrap().bytes_left) {
     request.set_header_type(HeaderType::FINAL);
   }
-  request.set_last_chunk_time();
 
   return Ok(true);
 }

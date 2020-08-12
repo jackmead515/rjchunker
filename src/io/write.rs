@@ -10,6 +10,13 @@ pub const RETRY_MESSAGE: [u8; 1] = [4 as u8];
 pub const NO_LEASE_MESSAGE: [u8; 1] = [5 as u8];
 pub const LEASE_IN_USE_MESSAGE: [u8; 1] = [6 as u8];
 
+pub fn write_string(client: &mut TcpStream, message: &String) -> Result<(), Errors> {
+  return match client.write_all(message.as_bytes()) {
+    Ok(()) => Ok(()),
+    Err(e) => Err(Errors::WriteError("Failed to write message".to_string()))
+  };
+}
+
 pub fn write_ok(client: &mut TcpStream) -> Result<(), Errors> {
   return match client.write_all(&OK_MESSAGE) {
     Ok(()) => Ok(()),
